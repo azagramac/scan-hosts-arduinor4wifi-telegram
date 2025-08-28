@@ -1,65 +1,31 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <UNOR4WMatrixGFX.h>
+#include "ArduinoGraphics.h"
+#include "Arduino_LED_Matrix.h"
 
 const char* TOKEN = "YOUR_TOKEN";
 const char* CHATID = "YOUR_CHATID";
 String api_telegram = "https://api.telegram.org/bot" + String(TOKEN) + "/sendMessage?parse_mode=HTML";
 
-UNOR4WMatrixGFX matrix;
-
 const char* HOME_SSID = "YOUR_SSID";
 const char* HOME_PASS = "YOUR_PASS_SSID";
 
-void animationSearching(){
-  for(int x=0;x<12;x++){
-    matrix.clear();
-    for(int y=0;y<8;y++){
-      matrix.drawPixel(x,y,LED_ON);
-    }
-    matrix.writeDisplay();
-    delay(100);
-  }
-}
+ArduinoLEDMatrix matrix;
 
-void animationConnected(){
-  int centerX=5, centerY=3;
-  for(int layer=0; layer<6; layer++){
-    matrix.clear();
-    for(int dx=-layer; dx<=layer; dx++){
-      for(int dy=-layer; dy<=layer; dy++){
-        int px=centerX+dx, py=centerY+dy;
-        if(px>=0 && px<12 && py>=0 && py<8) matrix.drawPixel(px,py,LED_ON);
-      }
-    }
-    matrix.writeDisplay();
-    delay(150);
-  }
-}
-
-void animationHostProgress(int current, int total){
-  int ledCount = map(current,0,total,0,12);
-  matrix.clear();
-  for(int x=0;x<ledCount;x++){
-    for(int y=0;y<8;y++){
-      matrix.drawPixel(x,y,LED_ON);
-    }
-  }
-  matrix.writeDisplay();
-}
-
-void animationMessageSent(){
-  for(int y=7; y>=0; y--){
-    matrix.clear();
-    for(int row=y; row<8; row++){
-      for(int x=0;x<12;x++){
-        matrix.drawPixel(x,row,LED_ON);
-      }
-    }
-    matrix.writeDisplay();
-    delay(150);
-  }
-}
+const uint32_t searchFrames[][4] = {
+  {0x80000000,0x0,0x0,100},{0x40000000,0x0,0x0,100},{0x20000000,0x0,0x0,100},{0x10000000,0x0,0x0,100},
+  {0x8000000,0x0,0x0,100},{0x4000000,0x0,0x0,100},{0x2000000,0x0,0x0,100},{0x1000000,0x0,0x0,100}
+};
+const uint32_t connectedFrames[][4] = {
+  {0x00001800,0x0,0x0,150},{0x00003C00,0x0,0x0,150},{0x00007E00,0x0,0x0,150},{0x0000FF00,0x0,0x0,150}
+};
+const uint32_t hostsFrames[][4] = {
+  {0x000000FF,0x0,0x0,50},{0x0000FF00,0x0,0x0,50},{0x00FF0000,0x0,0x0,50},{0xFF000000,0x0,0x0,50}
+};
+const uint32_t sentFrames[][4] = {
+  {0x00000001,0x0,0x0,100},{0x00000003,0x0,0x0,100},{0x00000007,0x0,0x0,100},{0x0000000F,0x0,0x0,100},
+  {0x0000001F,0x0,0x0,100},{0x0000003F,0x0,0x0,100},{0x0000007F,0x0,0x0,100},{0x000000FF,0x0,0x0,100}
+};
 
 void sendTelegram(String message){
   if(WiFi.status()==WL_CONNECTED){
@@ -72,17 +38,29 @@ void sendTelegram(String message){
   }
 }
 
+void showText(const char* txt){
+  matrix.beginDraw();
+  matrix.stroke(0xFFFFFFFF);
+  matrix.textFont(Font_4x6);
+  matrix.beginText(0, 1, 0xFFFFFFFF);
+  matrix.println(txt);
+  matrix.endText(SCROLL_LEFT);
+  matrix.endDraw();
+}
+
 void setup() {
   Serial.begin(115200);
   matrix.begin();
-  matrix.clear();
 
   String ssidConnect="";
   bool connected=false;
   int encryptionTypeConnected=WIFI_AUTH_OPEN;
 
+  matrix.loadSequence(searchFrames);
+  matrix.play(true);
+  showText("Searching");
+
   while(!connected){
-    animationSearching();
     int n = WiFi.scanNetworks();
     for(int i=0;i<n;i++){
       if(WiFi.SSID(i) == HOME_SSID){
@@ -109,12 +87,14 @@ void setup() {
 
   unsigned long startTime = millis();
   while(WiFi.status()!=WL_CONNECTED){
-    animationSearching();
     if(millis()-startTime>15000) break;
+    showText("Searching");
     delay(200);
   }
 
-  animationConnected();
+  matrix.loadSequence(connectedFrames);
+  matrix.play(true);
+  showText("Connected");
 
   IPAddress ip = WiFi.localIP();
   IPAddress subnet = WiFi.subnetMask();
@@ -124,24 +104,29 @@ void setup() {
   int hostsCount=0;
   String hostsList="";
   int totalHosts = ipEnd-ipStart+1;
+  matrix.loadSequence(hostsFrames);
+  matrix.play(true);
+  showText("Hosts");
+
   for(uint32_t addr=ipStart; addr<=ipEnd; addr++){
     IPAddress testIP((addr>>24)&0xFF,(addr>>16)&0xFF,(addr>>8)&0xFF,addr&0xFF);
     if(WiFi.ping(testIP)>=0){
       hostsCount++;
       hostsList += testIP.toString() + ", ";
     }
-    if(addr%2==0) animationHostProgress(addr-ipStart+1,totalHosts);
   }
 
-  String msg = "<b>Red:</b> " + ssidConnect + "\n";
-  msg += "<b>Encriptacion:</b> ";
+  String msg = "<b>Network:</b> " + ssidConnect + "\n";
+  msg += "<b>Encryption:</b> ";
   msg += (encryptionTypeConnected == WIFI_AUTH_OPEN) ? "OPEN" : "WPA/WPA2";
   msg += "\n<b>IP:</b> " + ip.toString() + "\n";
-  msg += "<b>Hosts activos:</b> " + String(hostsCount) + "\n";
+  msg += "<b>Active hosts:</b> " + String(hostsCount) + "\n";
   msg += "<b>IPs:</b> " + hostsList;
 
+  matrix.loadSequence(sentFrames);
+  matrix.play(true);
+  showText("Sending");
   sendTelegram(msg);
-  animationMessageSent();
 }
 
 void loop(){}
